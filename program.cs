@@ -200,34 +200,87 @@ namespace DirX
 
         private static IEnumerable<FileSystemInfo> EnumerateEntries(Options options)
         {
-            var root = new DirectoryInfo(options.RootDirectory);
-            var searchOption = options.Recurse ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+            var pendingDirectories = new Stack<DirectoryInfo>();
+            pendingDirectories.Push(new DirectoryInfo(options.RootDirectory));
 
-            var results = new List<FileSystemInfo>();
-
-            if (options.IncludeFiles)
+            while (pendingDirectories.Count > 0)
             {
-                try
+                var current = pendingDirectories.Pop();
+
+                if (options.IncludeFiles)
                 {
-                    results.AddRange(root.EnumerateFiles(options.SearchPattern, searchOption));
+                    foreach (var file in GetFilesSafe(current, options.SearchPattern))
+                    {
+                        yield return file;
+                    }
                 }
-                catch (UnauthorizedAccessException)
+
+                if (options.IncludeDirectories)
                 {
+                    foreach (var directory in GetDirectoriesSafe(current, options.SearchPattern))
+                    {
+                        yield return directory;
+                    }
+                }
+
+                if (!options.Recurse)
+                    continue;
+
+                foreach (var directory in GetDirectoriesSafe(current, "*"))
+                {
+                    FileAttributes attributes;
+
+                    try
+                    {
+                        attributes = directory.Attributes;
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        continue;
+                    }
+                    catch (IOException)
+                    {
+                        continue;
+                    }
+
+                    if (attributes.HasFlag(FileAttributes.ReparsePoint))
+                        continue;
+
+                    pendingDirectories.Push(directory);
                 }
             }
+        }
 
-            if (options.IncludeDirectories)
+        private static IEnumerable<FileInfo> GetFilesSafe(DirectoryInfo directory, string searchPattern)
+        {
+            try
             {
-                try
-                {
-                    results.AddRange(root.EnumerateDirectories(options.SearchPattern, searchOption));
-                }
-                catch (UnauthorizedAccessException)
-                {
-                }
+                return directory.GetFiles(searchPattern, SearchOption.TopDirectoryOnly);
             }
+            catch (UnauthorizedAccessException)
+            {
+                return Array.Empty<FileInfo>();
+            }
+            catch (IOException)
+            {
+                return Array.Empty<FileInfo>();
+            }
+        }
 
-            return results;
+        private static IEnumerable<DirectoryInfo> GetDirectoriesSafe(DirectoryInfo directory, string searchPattern)
+        {
+            try
+            {
+                return directory.GetDirectories(searchPattern, SearchOption.TopDirectoryOnly);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Array.Empty<DirectoryInfo>();
+            }
+            catch (IOException)
+            {
+                return Array.Empty<DirectoryInfo>();
+            }
         }
 
         private static IEnumerable<FileSystemInfo> ApplyFilters(IEnumerable<FileSystemInfo> entries, Options options)
@@ -509,7 +562,7 @@ Usage:
   dirx [switches] <path-pattern> [/min <date>] [/max <date>]
 
 Examples:
-  dirx /s /b C:\Users\aaron\Videos\*.mp4 /min 2025-1-1 /max 2025-2-1
+  dirx /s /b C:\Users\aza\Videos\*.mp4 /min 2025-1-1 /max 2025-2-1
   dirx /s /o:-d C:\Temp\*.log
   dirx /b /on C:\Work\*.cs
   dirx /a:hd /s C:\Data\*
